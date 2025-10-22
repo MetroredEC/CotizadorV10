@@ -1,751 +1,460 @@
-// cotizador.js
-// Lógica para la página de cotización de Metrored
+/* cotizador.js – Metrored
+   - Tabla PDF sin columna “Subtotal”
+   - Anti-superposición header/rows
+   - Logos proporcionados (sin aplastarse)
+   - Excepciones de cobertura (Admin)
+*/
 
-document.addEventListener('DOMContentLoaded', async () => {
-  // Verificar sesión
-  const { username, role } = getSessionUser();
-  if (!username || role !== 'asesor') {
-    // Redirigir a inicio si no hay sesión o rol incorrecto
-    window.location.href = 'index.html';
-    return;
-  }
-  // Saludo y botón de salida
-  const greeting = document.getElementById('userGreeting');
-  if (greeting) greeting.textContent = `Hola, ${username}`;
-  const logoutBtn = document.getElementById('logoutBtn');
-  if (logoutBtn) logoutBtn.addEventListener('click', logout);
+(() => {
+  // ---------- Utilidades de estado ----------
+  const state = {
+    cart: [], // [{codigo, descripcion, pvp, pva, cant}]
+    aseguradoras: [],
+    examenes: [],
+  };
 
-  // Cargar tarifario
-  await loadTarifario();
-  initCotizador();
-});
+  const $ = (sel) => document.querySelector(sel);
+  const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+  const fmt = (n) => Number(n || 0).toFixed(2);
 
-/**
- * Inicializa la lógica de la página de cotización una vez cargados los datos.
- */
-function initCotizador() {
-  // DOM references
-  const aseguradoraSelect = document.getElementById('aseguradoraSelect');
-  const coverageGroup = document.getElementById('coverageGroup');
-  const coverageInput = document.getElementById('coverageInput');
-  const searchInput = document.getElementById('searchInput');
-  const clearSearchBtn = document.getElementById('clearSearch');
-  const resultsList = document.getElementById('resultsList');
-  const resultsUl = document.getElementById('resultsUl');
-  const itemsBody = document.getElementById('itemsBody');
-  const noItemsMsg = document.getElementById('noItemsMsg');
-  const subtotalElem = document.getElementById('subtotal');
-  // Elementos para mostrar el copago referencial.  Se calculan dinámicamente
-  const copagoSummary = document.getElementById('copagoSummary');
-  const copagoPercElem = document.getElementById('copagoPerc');
-  const copagoAmountElem = document.getElementById('copagoAmount');
-  const totalAmountElem = document.getElementById('totalAmount');
-  const generatePdfBtn = document.getElementById('generatePdf');
-  const generateError = document.getElementById('generateError');
-  const clientNameInput = document.getElementById('clientName');
-  const clientCedulaInput = document.getElementById('clientCedula');
-  const cedulaErrorElem = document.getElementById('cedulaError');
-
-  // Variables de estado
-  let cart = [];
-
-  // Rellena lista de aseguradoras
-  if (aseguradoraSelect) {
-    aseguradoraSelect.innerHTML = '';
-    appState.aseguradoras.forEach((aseg) => {
-      const opt = document.createElement('option');
-      opt.value = aseg;
-      opt.textContent = aseg;
-      aseguradoraSelect.appendChild(opt);
-    });
-  }
-
-  // Función para actualizar visibilidad de cobertura
-  function updateCoverageVisibility() {
-    const current = aseguradoraSelect ? aseguradoraSelect.value : '';
-    if (coverageGroup) {
-      if (current && current !== 'Particular') {
-        coverageGroup.style.display = 'block';
-        // Cuando hay aseguradora se muestra el copago referencial
-        if (copagoSummary) copagoSummary.style.display = 'block';
-      } else {
-        coverageGroup.style.display = 'none';
-        if (copagoSummary) copagoSummary.style.display = 'none';
-      }
+  // Carga de datos del tarifario desde appState o localStorage
+  function loadDataFromAppStateOrStorage() {
+    // appState (inyectado por app.js)
+    const as = (window.appState && window.appState.data) ? window.appState.data : null;
+    if (as && as.examenes && as.aseguradoras) {
+      state.examenes = as.examenes;
+      state.aseguradoras = as.aseguradoras;
+      return;
     }
-    updateSummary();
-  }
-  if (aseguradoraSelect) {
-    aseguradoraSelect.addEventListener('change', () => {
-      // Si cambia la aseguradora, recalcular precios y mostrar/ocultar cobertura
-      updateCoverageVisibility();
-      recalcCartPrices();
-      renderCart();
-    });
-  }
-  // Inicializar visibilidad
-  updateCoverageVisibility();
-
-  // Búsqueda de exámenes
-  if (searchInput) {
-    searchInput.addEventListener('input', () => {
-      const query = searchInput.value.trim().toLowerCase();
-      if (query.length >= 2) {
-        const results = appState.examenes
-          .filter((exam) => {
-            return (
-              exam.descripcion.toLowerCase().includes(query) ||
-              exam.codigo.toLowerCase().includes(query)
-            );
-          })
-          .slice(0, 20);
-        if (results.length > 0) {
-          if (resultsUl) resultsUl.innerHTML = '';
-          results.forEach((exam) => {
-            // Calcular precios PVP y PVA para mostrar en la lista de resultados
-            const pvp = parseFloat(exam.precio) || 0;
-            let pva = null;
-            const currentAseg = aseguradoraSelect ? aseguradoraSelect.value : '';
-            if (currentAseg && currentAseg !== 'Particular' && exam.tarifas) {
-              const tarifa = exam.tarifas[currentAseg];
-              if (tarifa != null && !isNaN(tarifa)) {
-                pva = parseFloat(tarifa);
-              }
-            }
-            const li = document.createElement('li');
-            li.innerHTML = `<strong>${exam.codigo}</strong> – ${exam.descripcion}<br/><small>PVP: ${formatCurrency(pvp)} ${pva != null ? '– PVA: ' + formatCurrency(pva) : ''}</small>`;
-            li.style.lineHeight = '1.2';
-            li.addEventListener('click', () => {
-              addExamToCart(exam);
-              if (resultsUl) resultsUl.innerHTML = '';
-              if (resultsList) resultsList.style.display = 'none';
-              if (searchInput) searchInput.value = '';
-            });
-            if (resultsUl) resultsUl.appendChild(li);
-          });
-          if (resultsList) resultsList.style.display = 'block';
-        } else {
-          if (resultsList) resultsList.style.display = 'none';
-        }
-      } else {
-        if (resultsList) resultsList.style.display = 'none';
-      }
-    });
-  }
-  if (clearSearchBtn) {
-    clearSearchBtn.addEventListener('click', () => {
-      if (searchInput) searchInput.value = '';
-      if (resultsList) resultsList.style.display = 'none';
-    });
-  }
-
-  // Añade examen al carrito
-  function addExamToCart(exam) {
-    const existing = cart.find((item) => item.codigo === exam.codigo);
-    if (existing) {
-      existing.cantidad += 1;
-    } else {
-      const price = getExamPrice(exam, aseguradoraSelect ? aseguradoraSelect.value : '');
-      cart.push({
-        codigo: exam.codigo,
-        descripcion: exam.descripcion,
-        priceUnit: price,
-        cantidad: 1,
-      });
-    }
-    renderCart();
-  }
-
-  // Obtiene el precio para un examen según la aseguradora seleccionada
-  function getExamPrice(exam, aseguradora) {
-    if (!aseguradora || aseguradora === 'Particular') {
-      return parseFloat(exam.precio) || 0;
-    }
-    const tarifa = exam.tarifas[aseguradora];
-    if (tarifa != null && !isNaN(tarifa)) {
-      return parseFloat(tarifa);
-    }
-    return parseFloat(exam.precio) || 0;
-  }
-
-  // Recalcula precios unitarios del carrito cuando cambia la aseguradora
-  function recalcCartPrices() {
-    cart.forEach((item) => {
-      const exam = appState.examenes.find((e) => e.codigo === item.codigo);
-      if (exam) {
-        item.priceUnit = getExamPrice(exam, aseguradoraSelect ? aseguradoraSelect.value : '');
-      }
-    });
-  }
-
-  // Renderiza el carrito en la tabla
-  function renderCart() {
-    if (itemsBody) itemsBody.innerHTML = '';
-    if (cart.length === 0) {
-      if (noItemsMsg) noItemsMsg.style.display = 'block';
-    } else {
-      if (noItemsMsg) noItemsMsg.style.display = 'none';
-    }
-    cart.forEach((item, index) => {
-      const tr = document.createElement('tr');
-      // obtener examen original para calcular PVP y PVA
-      const exam = appState.examenes.find((e) => e.codigo === item.codigo);
-      const pvp = exam ? parseFloat(exam.precio) : item.priceUnit;
-      let pva = null;
-      const currentAseg = aseguradoraSelect ? aseguradoraSelect.value : '';
-      if (currentAseg && currentAseg !== 'Particular' && exam && exam.tarifas) {
-        const tarifa = exam.tarifas[currentAseg];
-        if (tarifa != null && !isNaN(tarifa)) {
-          pva = parseFloat(tarifa);
-        }
-      }
-      // código
-      const tdCode = document.createElement('td');
-      tdCode.textContent = item.codigo;
-      tr.appendChild(tdCode);
-      // descripción
-      const tdDesc = document.createElement('td');
-      tdDesc.textContent = item.descripcion;
-      tr.appendChild(tdDesc);
-      // PVP
-      const tdPvp = document.createElement('td');
-      tdPvp.textContent = formatCurrency(pvp);
-      tr.appendChild(tdPvp);
-      // PVA
-      const tdPva = document.createElement('td');
-      tdPva.textContent = (pva != null) ? formatCurrency(pva) : '-';
-      tr.appendChild(tdPva);
-      // cantidad (editable)
-      const tdQty = document.createElement('td');
-      const qtyInput = document.createElement('input');
-      qtyInput.type = 'number';
-      qtyInput.min = '1';
-      qtyInput.value = item.cantidad;
-      qtyInput.addEventListener('change', (e) => {
-        const val = parseInt(e.target.value, 10);
-        if (isNaN(val) || val < 1) {
-          qtyInput.value = item.cantidad;
-          return;
-        }
-        item.cantidad = val;
-        updateSummary();
-        // actualizar fila total
-        // el renderCart volverá a escribir la tabla más adelante si es necesario
-        tdTotal.textContent = formatCurrency(item.priceUnit * item.cantidad);
-      });
-      tdQty.appendChild(qtyInput);
-      tr.appendChild(tdQty);
-      // total
-      const tdTotal = document.createElement('td');
-      tdTotal.textContent = formatCurrency(item.priceUnit * item.cantidad);
-      tr.appendChild(tdTotal);
-      // eliminar
-      const tdRemove = document.createElement('td');
-      const removeBtn = document.createElement('button');
-      removeBtn.textContent = 'Eliminar';
-      removeBtn.className = 'btn';
-      removeBtn.style.fontSize = '12px';
-      removeBtn.addEventListener('click', () => {
-        cart.splice(index, 1);
-        renderCart();
-      });
-      tdRemove.appendChild(removeBtn);
-      tr.appendChild(tdRemove);
-      if (itemsBody) itemsBody.appendChild(tr);
-    });
-    updateSummary();
-  }
-
-  // Recalcula el subtotal a partir del estado actual del carrito
-  function calculateSubtotal() {
-    return cart.reduce((acc, item) => {
-      const price = Number(item.priceUnit ?? item.precio ?? item.price) || 0;
-      const qty = Number(item.cantidad ?? item.qty) || 1;
-      return acc + price * qty;
-    }, 0);
-  }
-
-  // Actualiza los totales y copago en el resumen
-  function updateSummary() {
-    const subtotal = calculateSubtotal();
-    if (subtotalElem) subtotalElem.textContent = formatCurrency(subtotal);
-
-    const aseg = aseguradoraSelect ? aseguradoraSelect.value : '';
-    const coverage = coverageInput ? parseFloat(coverageInput.value) || 0 : 0;
-
-    if (aseg && aseg !== 'Particular') {
-      // Obtiene la lista de exámenes sin cobertura desde localStorage
-      let exceptions = [];
+    // fallback: localStorage (por si admin activó un tarifario)
+    const raw = localStorage.getItem('tarifarioDataActive');
+    if (raw) {
       try {
-        const excStr = localStorage.getItem('exceptions');
-        if (excStr) {
-          exceptions = JSON.parse(excStr);
-        }
-      } catch (e) {
-        exceptions = [];
-      }
-      // Copago referencial: complemento al porcentaje de cobertura
-      const copagoPercent = 100 - coverage;
-      if (copagoPercElem) copagoPercElem.textContent = copagoPercent.toString();
-      // Calcular copago total considerando excepciones (sin cobertura)
-      let totalCopago = 0;
-      cart.forEach((item) => {
-        const priceItem = (Number(item.priceUnit) || 0) * (Number(item.cantidad) || 1);
-        if (exceptions.includes(item.codigo)) {
-          // Este examen no tiene cobertura, se paga completo
-          totalCopago += priceItem;
-        } else {
-          // Aplicar copago según el porcentaje general
-          totalCopago += priceItem * (copagoPercent / 100);
-        }
-      });
-      if (copagoAmountElem) copagoAmountElem.textContent = formatCurrency(totalCopago);
-      if (totalAmountElem) totalAmountElem.textContent = formatCurrency(subtotal);
-      if (copagoSummary) copagoSummary.style.display = 'block';
-    } else {
-      // Particular o sin aseguradora: todo se paga como copago
-      if (copagoAmountElem) copagoAmountElem.textContent = formatCurrency(subtotal);
-      if (totalAmountElem) totalAmountElem.textContent = formatCurrency(subtotal);
-      if (copagoSummary) copagoSummary.style.display = 'none';
-      if (copagoPercElem) copagoPercElem.textContent = '0';
+        const data = JSON.parse(raw);
+        state.examenes = data.examenes || [];
+        state.aseguradoras = data.aseguradoras || ['Particular'];
+      } catch {}
     }
+    // fallback mínimo
+    if (!state.aseguradoras.length) state.aseguradoras = ['Particular'];
+    if (!state.examenes.length) state.examenes = [];
+  }
 
-    // Compatibilidad hacia atrás: si hay código externo que lee window.subtotal
+  // Excepciones de cobertura
+  function getNoCoverageExceptions() {
     try {
-      window.subtotal = subtotal;
-    } catch (e) {
-      // ignorar si no se puede asignar
+      return JSON.parse(localStorage.getItem('noCoverageExceptions') || '[]'); // array de códigos
+    } catch {
+      return [];
     }
   }
 
-  // Validación de cédula en tiempo real
-  if (clientCedulaInput) {
-    clientCedulaInput.addEventListener('input', () => {
-      const ced = clientCedulaInput.value.trim();
-      if (ced === '') {
-        if (cedulaErrorElem) cedulaErrorElem.textContent = '';
-        return;
-      }
-      if (validarCedula(ced)) {
-        if (cedulaErrorElem) cedulaErrorElem.textContent = '';
-      } else {
-        if (cedulaErrorElem) cedulaErrorElem.textContent = 'Cédula inválida';
-      }
-    });
+  // Logos de aseguradoras (mapa nombre -> dataURL)
+  function getInsurerLogosMap() {
+    try {
+      return JSON.parse(localStorage.getItem('insurerLogos') || '{}');
+    } catch {
+      return {};
+    }
   }
 
-  // Evento para actualizar el resumen cuando cambia la cobertura referencial
-  if (coverageInput) {
-    coverageInput.addEventListener('input', () => {
-      // Limitar valor entre 0 y 100 y redondear a entero
-      let val = parseFloat(coverageInput.value);
-      if (isNaN(val) || val < 0) val = 0;
-      if (val > 100) val = 100;
-      coverageInput.value = val;
+  // ---------- Vistas y eventos ----------
+  function renderAseguradoras() {
+    const sel = $('#aseguradoraSelect');
+    sel.innerHTML = '';
+    state.aseguradoras.forEach((a) => {
+      const opt = document.createElement('option');
+      opt.value = a;
+      opt.textContent = a;
+      sel.appendChild(opt);
+    });
+    sel.value = 'Particular';
+    toggleCoverageField();
+  }
+
+  function toggleCoverageField() {
+    const aseg = $('#aseguradoraSelect').value;
+    const group = $('#coverageGroup');
+    if (!group) return;
+    group.style.display = (aseg && aseg !== 'Particular') ? 'block' : 'none';
+  }
+
+  function hookEvents() {
+    // Buscar examen
+    const search = $('#searchExam');
+    const list = $('#searchResults');
+    if (search) {
+      search.addEventListener('input', () => {
+        const q = (search.value || '').trim().toLowerCase();
+        list.innerHTML = '';
+        if (!q) return;
+        const hits = state.examenes.filter((e) =>
+          String(e.codigo).includes(q) ||
+          (e.descripcion && e.descripcion.toLowerCase().includes(q))
+        ).slice(0, 30);
+        hits.forEach((e) => {
+          const li = document.createElement('li');
+          li.className = 'result-item';
+          li.textContent = `${e.codigo} – ${e.descripcion} (PVP ${fmt(e.pvp)} / PVA ${fmt(e.pva)})`;
+          li.addEventListener('click', () => {
+            addToCart({
+              codigo: e.codigo,
+              descripcion: e.descripcion,
+              pvp: Number(e.pvp || 0),
+              pva: Number(e.pva || 0),
+              cant: 1,
+            });
+            search.value = '';
+            list.innerHTML = '';
+          });
+          list.appendChild(li);
+        });
+      });
+    }
+
+    // Cambio de aseguradora o cobertura
+    $('#aseguradoraSelect')?.addEventListener('change', () => {
+      toggleCoverageField();
       updateSummary();
     });
-  }
+    $('#coverageInput')?.addEventListener('input', () => updateSummary());
 
-  // Acción para generar PDF
-  if (generatePdfBtn) {
-    generatePdfBtn.addEventListener('click', async () => {
-      if (generateError) generateError.textContent = '';
-      // Validar campos
-      const clientName = clientNameInput ? clientNameInput.value.trim() : '';
-      const clientCedula = clientCedulaInput ? clientCedulaInput.value.trim() : '';
-      if (!clientName) {
-        if (generateError) generateError.textContent = 'Ingrese el nombre del cliente';
-        return;
-      }
-      if (!validarCedula(clientCedula)) {
-        if (generateError) generateError.textContent = 'Número de cédula inválido';
-        return;
-      }
-      if (cart.length === 0) {
-        if (generateError) generateError.textContent = 'Añada al menos un examen para cotizar';
-        return;
-      }
-      // Recoger datos
-      const aseguradora = aseguradoraSelect ? aseguradoraSelect.value : '';
-      const coverage = coverageInput ? parseFloat(coverageInput.value) || 0 : 0;
-      // Obtener subtotal desde la fuente de la verdad (cart)
-      const subtotal = calculateSubtotal();
-      // total se calculará tras recalcular copago/covered
-      let total = subtotal;
-
-      // Recalcular copago y cubierto considerando excepciones
-      let covered = 0;
-      let copago = 0;
-      if (aseguradora && aseguradora !== 'Particular') {
-        // Cargar lista de exámenes sin cobertura
-        let exceptions = [];
-        try {
-          const excStr = localStorage.getItem('exceptions');
-          if (excStr) exceptions = JSON.parse(excStr);
-        } catch (e) {
-          exceptions = [];
-        }
-        // Calcula copago y cubierto por ítem
-        cart.forEach((item) => {
-          const priceItem = (Number(item.priceUnit) || 0) * (Number(item.cantidad) || 1);
-          if (exceptions.includes(item.codigo)) {
-            // Sin cobertura para este examen: todo es copago
-            copago += priceItem;
-          } else {
-            copago += priceItem * ((100 - coverage) / 100);
-          }
-        });
-        covered = subtotal - copago;
-        total = covered + copago;
-      } else {
-        // Particular: todo es copago y no hay cobertura
-        copago = subtotal;
-        covered = 0;
-        total = subtotal;
-      }
-
-      // Preparar PDF
-      const { jsPDF } = window.jspdf;
-      // Utilizar formato A4 para mostrar toda la información y permitir texto más grande
-      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-      // Dimensiones de página en milímetros para A4 (210×297)
-      const pageWidth = 210;
-      const pageHeight = 297;
-      // Cargar logos en DataURL: logo de Metrored y logo de la aseguradora
-      const metroLogoUrl = 'images/logo.png';
-      let metroLogoDataUrl = null;
-      try {
-        metroLogoDataUrl = await toDataURL(metroLogoUrl);
-      } catch (e) {
-        console.warn('No se pudo cargar logo Metrored:', e);
-        metroLogoDataUrl = null;
-      }
-      // Determinar el logo de aseguradora: prioridad al logo cargado por aseguradora, luego el logo asociado al tarifario
-      let insurerLogoDataUrl = null;
-      try {
-        const logosStr = localStorage.getItem('logosByInsurer');
-        if (logosStr) {
-          const logosObj = JSON.parse(logosStr);
-          if (logosObj && logosObj[aseguradora]) {
-            insurerLogoDataUrl = logosObj[aseguradora];
-          }
-        }
-      } catch (e) {
-        console.warn('No se pudo parsear logosByInsurer', e);
-      }
-      // Si no hay logo específico pero existe uno en el tarifario, usarlo
-      if (!insurerLogoDataUrl) {
-        const logoFromTarifario = localStorage.getItem('tarifarioLogo');
-        if (logoFromTarifario) {
-          insurerLogoDataUrl = logoFromTarifario;
-        }
-      }
-      // Definiciones de layout
-      // Altura de cada fila en la tabla. Para A4 usamos filas más altas para evitar superposiciones
-      // Aumentamos ligeramente la altura para garantizar que el encabezado de la tabla
-      // y las filas de los exámenes no se superpongan visualmente incluso con textos largos.
-      const rowHeight = 15;
-      // Márgenes del documento en A4. Dejar 20 mm a cada lado para texto más grande
-      const margin = 20;
-      // Calcular número de cotización y fechas
-      const quoteNumber = String(Date.now() % 1000000).padStart(6, '0');
-      const todayDate = new Date();
-      const dayStr = String(todayDate.getDate()).padStart(2, '0');
-      const monthStr = String(todayDate.getMonth() + 1).padStart(2, '0');
-      const yearStr = todayDate.getFullYear();
-      const quoteDateStr = `${dayStr}-${monthStr}-${yearStr}`;
-      const dueDate = new Date(todayDate.getTime() + 30 * 24 * 60 * 60 * 1000);
-      const dueDayStr = String(dueDate.getDate()).padStart(2, '0');
-      const dueMonthStr = String(dueDate.getMonth() + 1).padStart(2, '0');
-      const dueYearStr = dueDate.getFullYear();
-      const dueDateStr = `${dueDayStr}-${dueMonthStr}-${dueYearStr}`;
-      // Copago porcentual para mostrar en el encabezado
-      const copagoPercentHeader = aseguradora !== 'Particular' ? 100 - coverage : 0;
-      // Determinar la altura del resumen (tres filas para aseguradora, dos para particular)
-      const resumenLineas = aseguradora !== 'Particular' ? 3 : 2;
-      const resumenHeight = resumenLineas * rowHeight + 4; // Altura del resumen con margen interno
-      // Calcular cuántas filas caben por página
-      // Primer margen para header y espacio después del header (deja lugar para detalles y encabezado de tabla)
-      // Altura aproximada de la cabecera (incluyendo logos y detalles). Para A4 damos más espacio
-      const headerYEnd = 70;
-      // Altura del pie de página para número de página y textos legales en A4
-      const footerHeight = 40;
-      const availableHeightNoSummary = pageHeight - headerYEnd - footerHeight;
-      const maxRowsNoSummary = Math.floor(availableHeightNoSummary / rowHeight);
-      const availableHeightWithSummary = pageHeight - headerYEnd - footerHeight - resumenHeight;
-      const maxRowsWithSummary = Math.floor(availableHeightWithSummary / rowHeight);
-      // Distribuir filas entre páginas
-      const filas = cart.map((it) => it);
-      const pageRows = [];
-      let remaining = filas.length;
-      while (remaining > maxRowsWithSummary) {
-        pageRows.push(maxRowsNoSummary);
-        remaining -= maxRowsNoSummary;
-      }
-      pageRows.push(remaining);
-      const totalPages = pageRows.length;
-      let currentRowIndex = 0;
-      let pageNum = 1;
-      /**
-       * Dibuja el encabezado de cada página. Incluye logos, título, detalles del cliente, aseguradora y cotización.
-       */
-      function drawHeader() {
-        // No dibujar marco exterior para formato A4
-        // Logos
-        // Logo de Metrored a la izquierda
-        // Ajustar el tamaño de los logos para que no se aplasten.  Usamos proporciones más
-        // pequeñas y mantenemos una relación aproximada 3:1 (ancho:alto).  Al reducir
-        // el tamaño se mejora la calidad visual del PDF.
-        const logoW = 35;
-        const logoH = 23;
-        const logoY = margin + 2;
-        if (metroLogoDataUrl) {
-          try {
-            doc.addImage(metroLogoDataUrl, 'PNG', margin, logoY, logoW, logoH);
-          } catch (e) {
-            // Ignorar si la imagen no se puede añadir
-          }
-        }
-        // Logo del seguro a la derecha si existe
-        if (insurerLogoDataUrl) {
-          try {
-            doc.addImage(insurerLogoDataUrl, 'PNG', pageWidth - margin - logoW, logoY, logoW, logoH);
-          } catch (e) {
-            // Ignorar
-          }
-        }
-        // Título centrado con tamaño de letra mayor para A4
-        doc.setFont('Helvetica', 'bold');
-        doc.setFontSize(20);
-        doc.text('Cotización de Servicios', pageWidth / 2, logoY + logoH + 15, { align: 'center' });
-        // Detalles de cliente y cotización en dos columnas. Fuente ligeramente más grande en A4
-        doc.setFont('Helvetica', 'normal');
-        doc.setFontSize(9);
-        let infoY = logoY + logoH + 25;
-        const col1X = margin;
-        const col2X = pageWidth / 2 + 4;
-        // Primera fila
-        doc.text(`Cliente: ${clientName}`, col1X, infoY);
-        doc.text(`Cédula: ${clientCedula}`, col2X, infoY);
-        infoY += 4;
-        // Segunda fila: aseguradora y copago/cobertura
-        doc.text(`Aseguradora: ${aseguradora}`, col1X, infoY);
-        if (aseguradora !== 'Particular') {
-          doc.text(`Copago ref.: ${copagoPercentHeader}%`, col2X, infoY);
-        }
-        infoY += 4;
-        // Tercera fila: número de cotización y fecha
-        doc.text(`N° Cotización: ${quoteNumber}`, col1X, infoY);
-        doc.text(`Fecha: ${quoteDateStr}`, col2X, infoY);
-        infoY += 4;
-        // Cuarta fila: validez
-        doc.text(`Validez hasta: ${dueDateStr}`, col1X, infoY);
-        // Línea separadora bajo los detalles
-        const yLine = headerYEnd - 3;
-        doc.setDrawColor(200, 200, 200);
-        doc.line(margin, yLine, pageWidth - margin, yLine);
-        // Encabezado de la tabla
-        const tableHeaderY = headerYEnd;
-        const headerLabels = ['Código', 'Descripción',  'Cant.', 'PVP', 'PVA'];
-        // Anchuras de columna adaptadas a formato A4 (suma 190 mm):
-        // Código, Descripción, PVP, PVA, Cant.
-        const colWidths = [25, 90, 20, 20, 15];
-        const xPositions = [margin];
-        for (let i = 0; i < colWidths.length - 1; i++) {
-          xPositions.push(xPositions[i] + colWidths[i]);
-        }
-        // Draw background
-        doc.setFillColor(0, 91, 171);
-        doc.rect(margin, tableHeaderY, pageWidth - 2 * margin, rowHeight, 'F');
-        // Draw header text
-        doc.setFont('Helvetica', 'bold');
-        doc.setFontSize(9);
-        doc.setTextColor(255, 255, 255);
-        for (let i = 0; i < headerLabels.length; i++) {
-          const x = xPositions[i] + 1;
-          const align = i >= 2 ? 'right' : 'left';
-          const colWidth = colWidths[i];
-          let textX = x;
-          if (align === 'right') {
-            textX = xPositions[i] + colWidths[i] - 1;
-          }
-          doc.text(headerLabels[i], textX, tableHeaderY + rowHeight - 2, { align: align });
-        }
-        // Reset text color for body
-        doc.setTextColor(0, 0, 0);
-      }
-
-      /**
-       * Dibuja el pie de página con número de página y texto legal.
-       */
-      function drawFooter() {
-        doc.setFontSize(7.5);
-        doc.setFont('Helvetica', 'normal');
-        // Número de página
-        doc.text(`Página ${pageNum} de ${totalPages}`, margin, pageHeight - 8);
-        // Texto legal (varias líneas si es necesario)
-        const legal = 'Esta cotización tiene carácter informativo y no constituye una oferta o compromiso de venta. Los valores presentados son referenciales y podrán variar según la validación de las condiciones de seguros y coberturas al momento del pago en caja.';
-        const maxWidth = pageWidth - 2 * margin - 60;
-        // Ajustar texto legal en varias líneas
-        const legalLines = doc.splitTextToSize(legal, maxWidth);
-        const legalY = pageHeight - 8;
-        doc.text(legalLines, pageWidth - margin - maxWidth, legalY, { align: 'left' });
-      }
-      // Variables para dibujo de filas: coinciden con la cabecera
-      // Anchos de columnas para A4 (suma 190 mm)
-      const colWidths = [25, 90, 20, 20, 15, 20];
-      const xPositions = [margin];
-      for (let i = 0; i < colWidths.length - 1; i++) {
-        xPositions.push(xPositions[i] + colWidths[i]);
-      }
-      // Dibujar páginas y filas
-      let filaIndex = 0;
-      for (let p = 0; p < pageRows.length; p++) {
-        if (p > 0) {
-          doc.addPage();
-          pageNum++;
-        }
-        drawHeader();
-        // Y inicial para la primera fila de datos en esta página
-        // La primera fila de datos comienza dos filas por debajo del encabezado de la tabla.
-        // Sumamos un pequeño margen adicional (30 mm) para evitar cualquier solapamiento con textos altos.
-        let yPos = headerYEnd + rowHeight + 30;
-        const rowsInPage = pageRows[p];
-        // Dibujar filas
-        doc.setFontSize(9);
-        doc.setFont('Helvetica', 'normal');
-        for (let i = 0; i < rowsInPage; i++) {
-          const item = cart[filaIndex];
-          // Encontrar examen original para precios
-          const exam = appState.examenes.find((e) => e.codigo === item.codigo);
-          const pvp = exam ? parseFloat(exam.precio) : item.priceUnit;
-          let pva = '';
-          if (aseguradora !== 'Particular') {
-            const val = exam && exam.tarifas ? exam.tarifas[aseguradora] : null;
-            if (val != null && !isNaN(val)) {
-              pva = parseFloat(val);
-            }
-          }
-          const desc = item.descripcion.length > 50 ? item.descripcion.substring(0, 47) + '...' : item.descripcion;
-          // Column values
-          const values = [
-            item.codigo,
-            desc,
-            item.cantidad.toString(),
-            formatCurrency(pvp),
-            pva === '' ? '-' : formatCurrency(pva),
-            formatCurrency(item.priceUnit * item.cantidad),
-          ];
-          for (let c = 0; c < values.length; c++) {
-            const align = c >= 2 ? 'right' : 'left';
-            let textX = xPositions[c] + 1;
-            if (align === 'right') {
-              textX = xPositions[c] + colWidths[c] - 1;
-            }
-            doc.text(String(values[c]), textX, yPos - 2, { align: align });
-          }
-          yPos += rowHeight;
-          filaIndex++;
-        }
-        // Si es la última página, dibujar resumen debajo de la tabla
-        if (p === pageRows.length - 1) {
-          let summaryY = yPos + 4;
-          // Si no hay suficiente espacio, empezar una nueva página
-          if (summaryY + resumenHeight + footerHeight > pageHeight - 5) {
-            drawFooter();
-            doc.addPage();
-            pageNum++;
-            drawHeader();
-            summaryY = headerYEnd + rowHeight + 4;
-          }
-          // Construir líneas de resumen: Subtotal, Copago (si aplica) y Total
-          const summaryLines = [];
-          summaryLines.push(['Subtotal', formatCurrency(subtotal)]);
-          if (aseguradora !== 'Particular') {
-            const copagoPercent = 100 - coverage;
-            summaryLines.push([`Copago referencial (${copagoPercent}%)`, formatCurrency(copago)]);
-          }
-          summaryLines.push(['Total', formatCurrency(total)]);
-          // Dibujar cada línea del resumen
-          doc.setFontSize(9);
-          // Posición horizontal del resumen ajustada al nuevo formato A4. Ancho total 110 mm (70 para etiquetas y 40 para valores)
-          const totalSummaryWidth = 110;
-          // Centrar el recuadro dentro del ancho disponible (ancho útil = pageWidth - 2*margin)
-          const summaryX = margin + ((pageWidth - 2 * margin) - totalSummaryWidth);
-          let rowY = summaryY;
-          for (let i = 0; i < summaryLines.length; i++) {
-            const [label, value] = summaryLines[i];
-            // Establecer colores de fondo y texto
-            if (i === summaryLines.length - 1) {
-              // total en azul oscuro con texto blanco
-              doc.setFillColor(0, 91, 171);
-              doc.setTextColor(255, 255, 255);
-            } else {
-              // otras filas en azul claro con texto negro
-              doc.setFillColor(230, 241, 255);
-              doc.setTextColor(0, 0, 0);
-            }
-            // Dibujar celdas de fondo para la etiqueta y el valor. La columna de etiqueta tiene 70 mm y la de valor 40 mm
-            doc.rect(summaryX, rowY, 70, rowHeight, 'F');
-            doc.rect(summaryX + 70, rowY, 40, rowHeight, 'F');
-            // Texto
-            doc.setFont('Helvetica', i === summaryLines.length - 1 ? 'bold' : 'normal');
-            // Etiqueta alineada a la izquierda en la celda de 70 mm
-            doc.text(label, summaryX + 2, rowY + (rowHeight - 2));
-            // Valor alineado a la derecha dentro de la celda de 40 mm
-            doc.text('$' + value, summaryX + 70 + 40 - 2, rowY + (rowHeight - 2), { align: 'right' });
-            rowY += rowHeight;
-          }
-        }
-        // Dibujar pie de página
-        drawFooter();
-      }
-      // Formatear nombre de archivo: Cotización + Nombre + Fecha
-      const today = new Date();
-      const d = String(today.getDate()).padStart(2, '0');
-      const m = String(today.getMonth() + 1).padStart(2, '0');
-      const y = String(today.getFullYear()).slice(-2);
-      const dateStr = `${d}-${m}-${y}`;
-      const safeName = clientName.replace(/\s+/g, '_');
-      const fileName = `Cotización_${safeName}_${dateStr}.pdf`;
-      doc.save(fileName);
-
-      // Registrar cotización en el log
-      try {
-        const user = getSessionUser();
-        const asesorName = user && user.username ? user.username : '';
-        const logData = {
-          asesor: asesorName,
-          paciente: clientName,
-          aseguradora: aseguradora,
-          subtotal: subtotal,
-          coverage: aseguradora !== 'Particular' ? coverage : null,
-          total: total,
-        };
-        if (typeof logQuote === 'function') {
-          logQuote(logData);
-        }
-      } catch (e) {
-        console.error('Error al registrar log de la cotización', e);
-      }
+    // Generar PDF
+    $('#generatePdfBtn')?.addEventListener('click', () => {
+      const name = ($('#clientName')?.value || '').trim();
+      const dni = ($('#clientCedula')?.value || '').trim();
+      if (!name) return alert('Ingrese el nombre del cliente.');
+      if (!dni || !validarCedulaEcuador(dni)) return alert('Ingrese una cédula válida.');
+      if (!state.cart.length) return alert('Agregue al menos un examen.');
+      generatePdf(name, dni);
     });
   }
-}
 
-/**
- * Convierte una URL de imagen a un DataURL utilizando FileReader.
- * @param {string} url
- * @returns {Promise<string>}
- */
-function toDataURL(url) {
-  return fetch(url)
-    .then((response) => response.blob())
-    .then(
-      (blob) =>
-        new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result);
-          reader.readAsDataURL(blob);
-        })
-    );
-}
+  function addToCart(item) {
+    // si ya existe, incrementa cantidad
+    const idx = state.cart.findIndex((it) => String(it.codigo) === String(item.codigo));
+    if (idx >= 0) state.cart[idx].cant += 1;
+    else state.cart.push(item);
+    renderCart();
+    updateSummary();
+  }
+
+  function removeFromCart(code) {
+    state.cart = state.cart.filter((it) => String(it.codigo) !== String(code));
+    renderCart();
+    updateSummary();
+  }
+
+  function renderCart() {
+    const tbody = $('#cartBody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    state.cart.forEach((it) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${it.codigo}</td>
+        <td>${it.descripcion}</td>
+        <td class="num">${fmt(it.pvp)}</td>
+        <td class="num">${fmt(it.pva)}</td>
+        <td class="num">
+          <input type="number" min="1" value="${it.cant}" class="qty-input" style="width:60px" />
+        </td>
+        <td><button class="btn btn-small danger">Quitar</button></td>
+      `;
+      tr.querySelector('.qty-input').addEventListener('input', (e) => {
+        const v = Math.max(1, Number(e.target.value || 1));
+        it.cant = v;
+        updateSummary();
+      });
+      tr.querySelector('button').addEventListener('click', () => removeFromCart(it.codigo));
+      tbody.appendChild(tr);
+    });
+  }
+
+  function updateSummary() {
+    const aseg = $('#aseguradoraSelect')?.value || 'Particular';
+    const coverage = Math.min(100, Math.max(0, Number($('#coverageInput')?.value || 80)));
+    const exceptions = getNoCoverageExceptions(); // [codigos sin cobertura]
+
+    let subtotal = 0;
+    let copago = 0;
+
+    state.cart.forEach((it) => {
+      const line = Number(it.pva || 0) * Number(it.cant || 1); // usamos PVA para la cotización
+      subtotal += line;
+      const sinCobertura = exceptions.includes(String(it.codigo));
+      if (aseg !== 'Particular' && !sinCobertura) {
+        copago += line * (100 - coverage) / 100;
+      } else {
+        copago += line; // particular o excepción => paga completo
+      }
+    });
+
+    $('#subtotal') && ($('#subtotal').textContent = fmt(subtotal));
+    $('#copagoAmount') && ($('#copagoAmount').textContent = fmt(copago));
+    $('#copagoPerc') && ($('#copagoPerc').textContent = String(100 - coverage));
+    $('#total') && ($('#total').textContent = fmt(copago));
+  }
+
+  // ---------- Validación de cédula Ecuador ----------
+  function validarCedulaEcuador(cedula) {
+    const c = String(cedula || '').trim();
+    if (!/^\d{10}$/.test(c)) return false;
+    const provincia = parseInt(c.slice(0, 2), 10);
+    if (provincia < 1 || provincia > 24) return false;
+    const d = c.split('').map(n => parseInt(n, 10));
+    const verificador = d.pop();
+    const pares = d.filter((_, i) => i % 2 === 1).reduce((a, n) => a + n, 0);
+    const imp = d.filter((_, i) => i % 2 === 0).map(n => {
+      let m = n * 2; if (m > 9) m -= 9; return m;
+    }).reduce((a, n) => a + n, 0);
+    const suma = pares + imp;
+    const decena = Math.ceil(suma / 10) * 10;
+    const val = (decena - suma) % 10;
+    return val === verificador;
+  }
+
+  // ---------- PDF ----------
+  function addLogoScaled(doc, imgData, x, y, maxW, maxH, format = 'PNG', ratioHint) {
+    try {
+      // Si conoces la relación exacta, pásala vía ratioHint
+      let w = maxW;
+      let h;
+      if (ratioHint && ratioHint > 0) {
+        h = w / ratioHint;
+      } else {
+        // fallback razonable si no se conoce: 3:1 (ancho:alto)
+        const ratio = 3;
+        h = w / ratio;
+      }
+      if (h > maxH) { h = maxH; w = h * (ratioHint || 3); }
+      doc.addImage(imgData, format, x, y, w, h);
+    } catch {}
+  }
+
+  async function generatePdf(clientName, clientCedula) {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const margin = 10;
+
+    // Logos
+    // Metrored (asset en <img id="logoMetroredPDF" data-img="dataURL"> o desde /images)
+    let logoMetrored = null;
+    const logoEl = document.getElementById('logoMetroredPDF');
+    if (logoEl && logoEl.dataset && logoEl.dataset.img) {
+      logoMetrored = logoEl.dataset.img;
+    }
+
+    // Logo de aseguradora desde localStorage
+    const aseguradora = $('#aseguradoraSelect')?.value || 'Particular';
+    const logosMap = getInsurerLogosMap();
+    const insurerLogo = logosMap[aseguradora] || null;
+
+    // Header
+    const headerTop = 15;
+    if (logoMetrored) addLogoScaled(doc, logoMetrored, margin, headerTop, 36, 14, 'PNG', 2.8);
+    if (insurerLogo) addLogoScaled(doc, insurerLogo, pageW - margin - 30, headerTop, 30, 12, 'PNG', 3.0);
+
+    // Título
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(20);
+    doc.text('COTIZACIÓN', pageW / 2, headerTop + 16, { align: 'center' });
+
+    // Datos (izquierda / derecha)
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(11);
+
+    const leftX = margin;
+    const rightX = pageW / 2 + 20;
+
+    const hoy = new Date();
+    const emision = hoy.toLocaleDateString('es-EC');
+    const validez = new Date(hoy.getTime() + 30 * 86400000).toLocaleDateString('es-EC');
+    const copagoPerc = (() => {
+      const coverage = Math.min(100, Math.max(0, Number($('#coverageInput')?.value || 80)));
+      return 100 - coverage;
+    })();
+
+    const cotNumber = Math.floor(100000 + Math.random() * 900000);
+
+    const left = [
+      `Cliente: ${clientName}`,
+      `Aseguradora: ${aseguradora}`,
+      `N° Cotización: ${cotNumber}`,
+      `Validez hasta: ${validez}`
+    ];
+    const right = [
+      `Cédula: ${clientCedula}`,
+      `Copago ref.: ${copagoPerc}%`,
+      `Fecha: ${emision}`
+    ];
+
+    let infoY = headerTop + 28;
+    left.forEach((t) => { doc.text(t, leftX, infoY); infoY += 6; });
+    infoY = headerTop + 28;
+    right.forEach((t) => { doc.text(t, rightX, infoY); infoY += 6; });
+
+    // ----------------- TABLA (sin Subtotal) -----------------
+    const tableY = headerTop + 48;
+    const rowH = 9; // altura uniforme
+    const headPad = 2;
+
+    // columnas: Código, Descripción, PVP, PVA, Cant.
+    const colW = [28, 110, 22, 22, 18];
+    const X = [margin]; for (let i = 0; i < colW.length - 1; i++) X.push(X[i] + colW[i]);
+
+    // Encabezado
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    const headH = rowH + headPad;
+    const totalTableW = colW.reduce((a, b) => a + b, 0);
+
+    doc.setFillColor(24, 86, 156);
+    doc.setTextColor(255, 255, 255);
+    doc.rect(margin, tableY, totalTableW, headH, 'F');
+
+    const headBaseY = tableY + headH / 2 + 3;
+    doc.text('Código',      X[0] + 2,  headBaseY);
+    doc.text('Descripción', X[1] + 2,  headBaseY);
+    doc.text('PVP',         X[2] + 18, headBaseY, { align: 'right' });
+    doc.text('PVA',         X[3] + 18, headBaseY, { align: 'right' });
+    doc.text('Cant.',       X[4] + 13, headBaseY, { align: 'right' });
+
+    // Filas
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    doc.setTextColor(0, 0, 0);
+
+    let y = tableY + headH + 1; // colchón anti-roce
+    const ellipsis = (s, max) => s && s.length > max ? s.slice(0, max - 1) + '…' : (s || '');
+
+    const items = state.cart.map((it) => ({
+      codigo: it.codigo,
+      descripcion: it.descripcion,
+      pvp: Number(it.pvp || 0),
+      pva: Number(it.pva || 0),
+      cant: Number(it.cant || 1),
+    }));
+
+    items.forEach((it) => {
+      if (y + rowH > pageH - margin - 40) { // deja espacio para el resumen y el legal
+        // Nueva página y repetir header
+        doc.addPage();
+        doc.setFillColor(24, 86, 156);
+        doc.setTextColor(255, 255, 255);
+        doc.rect(margin, margin, totalTableW, headH, 'F');
+        const hy = margin + headH / 2 + 3;
+        doc.text('Código',      X[0] + 2,  hy);
+        doc.text('Descripción', X[1] + 2,  hy);
+        doc.text('PVP',         X[2] + 18, hy, { align: 'right' });
+        doc.text('PVA',         X[3] + 18, hy, { align: 'right' });
+        doc.text('Cant.',       X[4] + 13, hy, { align: 'right' });
+        doc.setTextColor(0, 0, 0);
+        y = margin + headH + 1;
+      }
+
+      const baseY = y + rowH - 2;
+      doc.text(String(it.codigo), X[0] + 2, baseY);
+      doc.text(ellipsis(it.descripcion, 70), X[1] + 2, baseY);
+      doc.text(fmt(it.pvp), X[2] + 18, baseY, { align: 'right' });
+      doc.text(fmt(it.pva), X[3] + 18, baseY, { align: 'right' });
+      doc.text(String(it.cant), X[4] + 13, baseY, { align: 'right' });
+
+      doc.setDrawColor(230);
+      doc.line(margin, y + rowH, margin + totalTableW, y + rowH);
+      y += rowH;
+    });
+
+    // ----------------- RESUMEN -----------------
+    const coverage = Math.min(100, Math.max(0, Number($('#coverageInput')?.value || 80)));
+    const exceptions = getNoCoverageExceptions();
+    let subtotal = 0;
+    let copago = 0;
+
+    items.forEach((it) => {
+      const line = it.pva * it.cant;
+      subtotal += line;
+      const sinCobertura = exceptions.includes(String(it.codigo));
+      if (aseguradora !== 'Particular' && !sinCobertura) {
+        copago += line * (100 - coverage) / 100;
+      } else {
+        copago += line;
+      }
+    });
+
+    const summaryW = 110;
+    const sumX = pageW - margin - summaryW;
+    let sumY = y + 8;
+    if (sumY + 30 > pageH - margin - 18) {
+      doc.addPage();
+      sumY = margin + 10;
+    }
+
+    // caja resumen
+    doc.setFillColor(236, 244, 252);
+    doc.setDrawColor(220);
+    doc.roundedRect(sumX, sumY, summaryW, 28, 2, 2, 'FD');
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(11);
+
+    // filas del resumen
+    const row = (label, val, bold) => {
+      if (bold) doc.setFont('helvetica', 'bold'); else doc.setFont('helvetica', 'normal');
+      const yLine = sumY + 7;
+      doc.text(label, sumX + 6, yLine);
+      doc.text(`$${fmt(val)}`, sumX + summaryW - 6, yLine, { align: 'right' });
+      sumY += 10;
+    };
+
+    row('Subtotal', subtotal, false);
+    row(`Copago referencial (${100 - coverage}%)`, copago, false);
+
+    // total destacado
+    doc.setFillColor(24, 86, 156);
+    doc.setTextColor(255, 255, 255);
+    doc.roundedRect(sumX, sumY, summaryW, 10, 2, 2, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.text('Total', sumX + 6, sumY + 7);
+    doc.text(`$${fmt(copago)}`, sumX + summaryW - 6, sumY + 7, { align: 'right' });
+    doc.setTextColor(0, 0, 0);
+
+    // ----------------- LEGAL -----------------
+    const legal = 'Esta cotización tiene carácter informativo y no constituye una oferta o compromiso de venta. ' +
+      'Los valores presentados son referenciales y podrán variar según la validación de las condiciones de seguros ' +
+      'y coberturas al momento del pago en caja.';
+    const legalY = pageH - margin - 8;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.text(legal, margin, legalY, { maxWidth: pageW - 2 * margin, align: 'left' });
+
+    // Pie de página: numeración
+    const pageCount = doc.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setFontSize(8);
+      doc.text(`Página ${i} de ${pageCount}`, pageW - margin, pageH - 4, { align: 'right' });
+    }
+
+    // Nombre del archivo
+    const d = new Date();
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const yy = String(d.getFullYear()).slice(-2);
+    const filename = `Cotización_${clientName.replace(/\s+/g, '_')}_${dd}-${mm}-${yy}.pdf`;
+    doc.save(filename);
+  }
+
+  // ---------- Init ----------
+  function init() {
+    loadDataFromAppStateOrStorage();
+    renderAseguradoras();
+    hookEvents();
+    renderCart();
+    updateSummary();
+  }
+
+  document.addEventListener('DOMContentLoaded', init);
+})();
