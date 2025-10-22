@@ -395,9 +395,9 @@ function initCotizador() {
     // Altura de cada fila en la tabla. Para A4 usamos filas más altas para evitar superposiciones
     // Aumentamos ligeramente la altura para garantizar que el encabezado de la tabla
     // y las filas de los exámenes no se superpongan visualmente incluso con textos largos.
-    const rowHeight = 9;
-    // Márgenes del documento en A4. Dejar 10 mm a cada lado para texto más grande
-    const margin = 10;
+    const rowHeight = 15;
+    // Márgenes del documento en A4. Dejar 20 mm a cada lado para texto más grande
+    const margin = 20;
     // Calcular número de cotización y fechas
     const quoteNumber = String(Date.now() % 1000000).padStart(6, '0');
     const todayDate = new Date();
@@ -420,7 +420,7 @@ function initCotizador() {
     // Altura aproximada de la cabecera (incluyendo logos y detalles). Para A4 damos más espacio
     const headerYEnd = 70;
     // Altura del pie de página para número de página y textos legales en A4
-    const footerHeight = 20;
+    const footerHeight = 40;
     const availableHeightNoSummary = pageHeight - headerYEnd - footerHeight;
     const maxRowsNoSummary = Math.floor(availableHeightNoSummary / rowHeight);
     const availableHeightWithSummary = pageHeight - headerYEnd - footerHeight - resumenHeight;
@@ -448,7 +448,7 @@ function initCotizador() {
       // pequeñas y mantenemos una relación aproximada 3:1 (ancho:alto).  Al reducir
       // el tamaño se mejora la calidad visual del PDF.
       const logoW = 23;
-      const logoH = 7;
+      const logoH = 15;
       const logoY = margin + 2;
       doc.addImage(metroLogoDataUrl, 'PNG', margin, logoY, logoW, logoH);
       // Logo del seguro a la derecha si existe
@@ -548,8 +548,8 @@ function initCotizador() {
       drawHeader();
       // Y inicial para la primera fila de datos en esta página
       // La primera fila de datos comienza una fila por debajo del encabezado de la tabla.
-      // Sumamos un pequeño margen adicional (1 mm) para evitar cualquier solapamiento con textos altos.
-      let yPos = headerYEnd + rowHeight + 1;
+      // Sumamos un pequeño margen adicional (15 mm) para evitar cualquier solapamiento con textos altos.
+      let yPos = headerYEnd + rowHeight + 15;
       const rowsInPage = pageRows[p];
       // Dibujar filas
       doc.setFontSize(9);
