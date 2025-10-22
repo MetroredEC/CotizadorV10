@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cotizador Metrored</title>
+    <link rel="stylesheet" href="css/style.css" />
+    <!-- Librerías externas -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+    <!-- Icono de pestaña -->
+    <link rel="icon" type="image/png" href="images/favicon.png" />
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <img src="images/logo.png" alt="Logo Metrored" class="logo" />
+        <div class="user-actions">
+          <span id="userGreeting"></span>
+          <button id="logoutBtn" class="btn" style="margin-left: 10px;">Salir</button>
+        </div>
+      </div>
+      <!-- Contenido principal dispuesto en una sola columna para mejorar la experiencia de uso -->
+      <!-- Información del cliente y aseguradora -->
+      <div class="section">
+        <h2>Información del cliente</h2>
+        <div class="client-row">
+          <div class="form-group">
+            <label for="clientName">Nombre completo</label>
+            <input type="text" id="clientName" required />
+          </div>
+          <div class="form-group">
+            <label for="clientCedula">Cédula</label>
+            <input type="text" id="clientCedula" required />
+            <p id="cedulaError" class="error-message"></p>
+          </div>
+        </div>
+        <!-- Aseguradora y cobertura se muestran en la misma fila para ahorrar espacio -->
+        <div class="inline-fields">
+          <div class="form-group">
+            <label for="aseguradoraSelect">Aseguradora</label>
+            <select id="aseguradoraSelect"></select>
+          </div>
+          <div class="form-group" id="coverageGroup" style="display:none;">
+            <!-- Input de cobertura: por defecto 80 %. El asesor puede modificarlo para recalcular el copago. -->
+            <label for="coverageInput">Cobertura referencial (%)</label>
+            <input type="number" id="coverageInput" min="0" max="100" step="1" value="80" />
+          </div>
+        </div>
+      </div>
+      <!-- Búsqueda de exámenes -->
+      <div class="section">
+        <h2>Búsqueda de exámenes</h2>
+        <div class="search-bar">
+          <input type="text" id="searchInput" placeholder="Buscar por nombre o código" />
+          <button id="clearSearch" class="btn" title="Limpiar búsqueda">Limpiar</button>
+        </div>
+        <div class="results-list" id="resultsList" style="display:none;">
+          <ul id="resultsUl"></ul>
+        </div>
+      </div>
+      <!-- Tabla de exámenes seleccionados -->
+      <div class="section">
+        <h2>Pruebas seleccionadas</h2>
+        <div class="items-container">
+          <table class="items-table" id="itemsTable">
+            <thead>
+              <tr>
+                <th>Código</th>
+                <th>Descripción</th>
+                <th>PVP</th>
+                <th>PVA</th>
+                <th>Cant.</th>
+                <th>Total</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="itemsBody"></tbody>
+          </table>
+          <p id="noItemsMsg">No hay exámenes añadidos.</p>
+        </div>
+      </div>
+      <!-- Resumen de totales y generación de PDF -->
+      <div class="section">
+        <h2>Resumen</h2>
+        <div class="summary-table" id="summary">
+          <div class="summary-row">
+            <div class="summary-label">Subtotal</div>
+            <div class="summary-value" id="subtotal">0.00</div>
+          </div>
+          <!-- Copago referencial: indica el porcentaje no cubierto y el monto correspondiente. Esta fila se oculta para particulares -->
+          <div class="summary-row" id="copagoSummary" style="display:none;">
+            <div class="summary-label">Copago referencial (<span id="copagoPerc">20</span>%)</div>
+            <div class="summary-value" id="copagoAmount">0.00</div>
+          </div>
+          <div class="summary-row summary-total">
+            <div class="summary-label">Total</div>
+            <div class="summary-value" id="totalAmount">0.00</div>
+          </div>
+        </div>
+        <div style="margin-top: 10px;">
+          <button id="generatePdf" class="btn">Generar PDF</button>
+          <p id="generateError" class="error-message"></p>
+        </div>
+      </div>
+      <div class="footer">
+        &copy; 2025 Metrored – Sistema de cotizaciones
+      </div>
+    </div>
+    <script src="js/app.js"></script>
+    <script src="js/cedula.js"></script>
+    <script src="js/cotizador.js"></script>
+  </body>
+</html>
