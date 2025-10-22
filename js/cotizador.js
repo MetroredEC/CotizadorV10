@@ -447,8 +447,8 @@ function initCotizador() {
       // Ajustar el tamaño de los logos para que no se aplasten.  Usamos proporciones más
       // pequeñas y mantenemos una relación aproximada 3:1 (ancho:alto).  Al reducir
       // el tamaño se mejora la calidad visual del PDF.
-      const logoW = 23;
-      const logoH = 15;
+      const logoW = 35;
+      const logoH = 23;
       const logoY = margin + 2;
       doc.addImage(metroLogoDataUrl, 'PNG', margin, logoY, logoW, logoH);
       // Logo del seguro a la derecha si existe
@@ -458,11 +458,11 @@ function initCotizador() {
       // Título centrado con tamaño de letra mayor para A4
       doc.setFont('Helvetica', 'bold');
       doc.setFontSize(20);
-      doc.text('COTIZACIÓN', pageWidth / 2, logoY + logoH + 10, { align: 'center' });
+      doc.text('Cotización de Servicios', pageWidth / 2, logoY + logoH + 15, { align: 'center' });
       // Detalles de cliente y cotización en dos columnas. Fuente ligeramente más grande en A4
       doc.setFont('Helvetica', 'normal');
       doc.setFontSize(9);
-      let infoY = logoY + logoH + 14;
+      let infoY = logoY + logoH + 25;
       const col1X = margin;
       const col2X = pageWidth / 2 + 4;
       // Primera fila
@@ -487,10 +487,10 @@ function initCotizador() {
       doc.line(margin, yLine, pageWidth - margin, yLine);
       // Encabezado de la tabla
       const tableHeaderY = headerYEnd;
-      const headerLabels = ['Código', 'Descripción', 'PVP', 'PVA', 'Cant.', 'Subtotal'];
+      const headerLabels = ['Código', 'Descripción',  'Cant.', 'PVP', 'PVA'];
       // Anchuras de columna adaptadas a formato A4 (suma 190 mm):
-      // Código, Descripción, PVP, PVA, Cant., Subtotal
-      const colWidths = [25, 90, 20, 20, 15, 20];
+      // Código, Descripción, PVP, PVA, Cant.
+      const colWidths = [25, 90, 20, 20, 15];
       const xPositions = [margin];
       for (let i = 0; i < colWidths.length - 1; i++) {
         xPositions.push(xPositions[i] + colWidths[i]);
@@ -511,24 +511,9 @@ function initCotizador() {
           textX = xPositions[i] + colWidths[i] - 1;
         }
         doc.text(headerLabels[i], textX, tableHeaderY + rowHeight - 2, { align: align });
-      }
       // Reset text color for body
       doc.setTextColor(0, 0, 0);
     }
-    
-// === PRIMERA FILA: SIEMPRE DESPUÉS DEL HEADER ===
-doc.setFont('helvetica', 'normal');
-doc.setFontSize(10);
-doc.setTextColor(0,0,0);
-
-// la clave: y de comienzo para las filas
-let y = tableY + headH + 1;      // +1 mm de colchón para evitar cualquier roce
-
-// helper para cortar descripción en una línea (evita que 'salte' al header)
-const ellipsis = (s, max) => s.length > max ? s.slice(0, max-1) + '…' : s;
-
-// === DIBUJAR FILAS ===
-items.forEach(it => 
    
     /**
      * Dibuja el pie de página con número de página y texto legal.
@@ -562,9 +547,9 @@ items.forEach(it =>
       }
       drawHeader();
       // Y inicial para la primera fila de datos en esta página
-      // La primera fila de datos comienza una fila por debajo del encabezado de la tabla.
-      // Sumamos un pequeño margen adicional (15 mm) para evitar cualquier solapamiento con textos altos.
-      let yPos = headerYEnd + rowHeight + 15;
+      // La primera fila de datos comienza dos filas por debajo del encabezado de la tabla.
+      // Sumamos un pequeño margen adicional (30 mm) para evitar cualquier solapamiento con textos altos.
+      let yPos = headerYEnd + rowHeight + 30;
       const rowsInPage = pageRows[p];
       // Dibujar filas
       doc.setFontSize(9);
