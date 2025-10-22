@@ -515,6 +515,21 @@ function initCotizador() {
       // Reset text color for body
       doc.setTextColor(0, 0, 0);
     }
+    
+// === PRIMERA FILA: SIEMPRE DESPUÉS DEL HEADER ===
+doc.setFont('helvetica', 'normal');
+doc.setFontSize(10);
+doc.setTextColor(0,0,0);
+
+// la clave: y de comienzo para las filas
+let y = tableY + headH + 1;      // +1 mm de colchón para evitar cualquier roce
+
+// helper para cortar descripción en una línea (evita que 'salte' al header)
+const ellipsis = (s, max) => s.length > max ? s.slice(0, max-1) + '…' : s;
+
+// === DIBUJAR FILAS ===
+items.forEach(it => 
+   
     /**
      * Dibuja el pie de página con número de página y texto legal.
      */
